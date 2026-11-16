@@ -12,7 +12,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="Payment Edge Fraud Monitor - Optimize (PER & Noise Aug)",
+    page_title="Payment Edge Fraud Monitor - Advanced (PER & Noise Augmentation)",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -90,7 +90,7 @@ def is_server_alive(host="127.0.0.1", port=8000) -> bool:
 
 def start_uvicorn_server() -> tuple[bool, str]:
     if is_server_alive():
-        return True, "Server đã đang chạy trên cổng 8000."
+        return True, "The server is already running on port 8000."
     try:
         py_exe = get_python_exe()
         flags = 0x00000008 | 0x00000200 if os.name == "nt" else 0
@@ -106,15 +106,15 @@ def start_uvicorn_server() -> tuple[bool, str]:
         for _ in range(24):
             time.sleep(0.5)
             if is_server_alive():
-                return True, f"Server khởi động thành công (PID {p.pid})!"
+                return True, f"Server started successfully (PID {p.pid})!"
             if p.poll() is not None:
                 log_f.close()
                 err_msg = ""
                 if os.path.exists("uvicorn_server.log"):
                     with open("uvicorn_server.log", "r", encoding="utf-8", errors="ignore") as lf:
                         err_msg = lf.read()[-300:]
-                return False, f"Server dừng sớm với mã lỗi {p.returncode}: {err_msg}"
-        return False, "Khởi động server quá thời gian chờ (Timeout > 12s)."
+                return False, f"The server exited early with code {p.returncode}: {err_msg}"
+        return False, "Server startup timed out after 12 seconds."
     except Exception as e:
         return False, str(e)
 
@@ -188,7 +188,7 @@ def start_boost_simulation(rows: int, drift: bool, drift_start: int, drift_len: 
         p = subprocess.Popen(cmd, creationflags=flags)
         with open(BOOST_PID_FILE, "w", encoding="utf-8") as f:
             f.write(str(p.pid))
-        return True, f"Đã kích hoạt bắn luồng Boost (PID {p.pid})!"
+        return True, f"Boost transaction streaming started (PID {p.pid})!"
     except Exception as e:
         return False, str(e)
 
@@ -314,9 +314,13 @@ def check_models_status() -> dict:
 
 
 def trigger_warmup() -> tuple[bool, str]:
+    if not os.path.isfile("data/creditcard_prefix.csv"):
+        return False, "Training data not found: data/creditcard_prefix.csv. Prepare and split the dataset first."
     try:
         res = subprocess.run([get_python_exe(), "pretrain.py"], capture_output=True, text=True)
         if res.returncode == 0:
+            if not all(os.path.isfile(path) for path in ("model_hat.pkl", "model_arf.pkl", "model_rf.pkl")):
+                return False, "Training finished without the required model files. Check the training data and pretrain.py output."
             try:
                 requests.post(f"{SERVER}/reload_models", timeout=3)
             except Exception:
@@ -343,121 +347,121 @@ initial_alpha = server_cfg.get("alert_budget_alpha", 1.0)
 initial_win = server_cfg.get("window_size", 500)
 
 with st.sidebar:
-    st.header(" Quản Lý Server & Luồng Dữ Liệu")
+    st.header("Server & Transaction Stream Management")
 
     srv_alive = is_server_alive()
     if srv_alive:
-        st.success(" **Server Uvicorn: ONLINE** (Cổng 8000)")
-        if st.button(" Dừng Server", key="btn_stop_srv", use_container_width=True):
+        st.success("**Uvicorn Server: ONLINE** (Port 8000)")
+        if st.button("Stop Server", key="btn_stop_srv", width="stretch"):
             stop_uvicorn_server()
-            st.info("Đã gửi lệnh dừng server.")
+            st.info("Server stop command sent.")
             time.sleep(1)
             st.rerun()
     else:
-        st.error(" **Server Uvicorn: OFFLINE**")
-        if st.button("▶ Khởi Động Server", type="primary", key="btn_start_srv", use_container_width=True):
-            with st.spinner("Đang khởi động Uvicorn Server..."):
+        st.error("**Uvicorn Server: OFFLINE**")
+        if st.button("Start Server", type="primary", key="btn_start_srv", width="stretch"):
+            with st.spinner("Starting the Uvicorn server..."):
                 ok, msg = start_uvicorn_server()
                 if ok:
                     st.success(f" {msg}")
                     time.sleep(1)
                     st.rerun()
                 else:
-                    st.error(f"Lỗi: {msg}")
+                    st.error(f"Error: {msg}")
 
     st.divider()
-    st.subheader(" Bắn Luồng Dữ Liệu (Turbo Boost)")
+    st.subheader("Transaction Streaming (Turbo Boost)")
     b_stat = get_boost_status()
     b_running = b_stat.get("running", False)
 
-    with st.expander("Tùy chọn luồng giao dịch", expanded=not b_running):
-        b_rows = st.number_input("Số lượng giao dịch (Rows)", min_value=100, max_value=25000, value=5000, step=500)
-        b_drift = st.checkbox("Kích hoạt Concept Drift", value=False, help="Làm lệch phân phối đặc trưng gian lận để thử thách khả năng thích ứng.")
+    with st.expander("Transaction Stream Options", expanded=not b_running):
+        b_rows = st.number_input("Transactions (Rows)", min_value=100, max_value=25000, value=5000, step=500)
+        b_drift = st.checkbox("Enable Concept Drift", value=False, help="Shift fraud feature distributions to demonstrate model adaptation.")
         if b_drift:
-            b_dstart = st.number_input("Bước bắt đầu Drift", min_value=100, max_value=10000, value=1500, step=100)
-            b_dlen = st.number_input("Độ dài đợt Drift", min_value=100, max_value=5000, value=800, step=100)
+            b_dstart = st.number_input("Drift Start Step", min_value=100, max_value=10000, value=1500, step=100)
+            b_dlen = st.number_input("Drift Duration (Transactions)", min_value=100, max_value=5000, value=800, step=100)
         else:
             b_dstart, b_dlen = 1500, 800
 
     if b_running:
-        st.info(f" **Đang bắn luồng...** ({b_stat.get('count', 0):,}/{b_stat.get('total', 0):,} txs)")
+        st.info(f"**Streaming transactions...** ({b_stat.get('count', 0):,}/{b_stat.get('total', 0):,} txs)")
         pct = min(1.0, max(0.0, b_stat.get("count", 0) / max(1, b_stat.get("total", 1))))
         st.progress(pct)
-        st.caption(f"Tốc độ: **{b_stat.get('speed', 0):.0f} tx/s** | Gian lận phát hiện: **{b_stat.get('fraud_count', 0)}**")
-        if st.button(" Dừng Bắn Luồng", key="btn_stop_boost", use_container_width=True):
+        st.caption(f"Speed: **{b_stat.get('speed', 0):.0f} tx/s** | Confirmed frauds: **{b_stat.get('fraud_count', 0)}**")
+        if st.button("Stop Streaming", key="btn_stop_boost", width="stretch"):
             stop_boost_simulation()
-            st.warning("Đã dừng bắn luồng.")
+            st.warning("Transaction streaming stopped.")
             time.sleep(0.5)
             st.rerun()
     else:
         if srv_alive:
-            if st.button(" Bắt Đầu Bắn Luồng Ngay", type="primary", key="btn_start_boost", use_container_width=True):
+            if st.button("Start Streaming", type="primary", key="btn_start_boost", width="stretch"):
                 ok, msg = start_boost_simulation(b_rows, b_drift, b_dstart, b_dlen)
                 if ok:
                     st.success(f" {msg}")
                     time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error(f"Lỗi: {msg}")
+                    st.error(f"Error: {msg}")
         else:
-            st.button(" Bắt Đầu Bắn Luồng (Cần bật Server)", disabled=True, use_container_width=True)
+            st.button("Start Streaming (Server Required)", disabled=True, width="stretch")
 
     st.divider()
-    st.subheader(" Cấu Hình Gateway Biên")
+    st.subheader("Edge Gateway Settings")
     threshold = st.slider(
-        "Ngưỡng chặn gian lận (Threshold)", min_value=0.10, max_value=0.95,
+        "Fraud Blocking Threshold", min_value=0.10, max_value=0.95,
         value=float(initial_thresh), step=0.05,
-        help="Giao dịch có P(gian lận) > ngưỡng này sẽ bị CHẶN ngay tại Gateway."
+        help="Transactions with fraud probability above this threshold are blocked at the gateway."
     )
     alpha = st.slider(
-        "Hệ số ngân sách cảnh báo (α)", min_value=0.5, max_value=5.0,
+        "Alert Budget Multiplier (α)", min_value=0.5, max_value=5.0,
         value=float(initial_alpha), step=0.5,
-        help="Hệ số tính Alert Budget: k = round(alpha * tỷ_lệ_gian_lận * W)."
+        help="Alert budget: k = max(1, round(alpha * fraud_rate * W))."
     )
     window_size = st.slider(
-        "Cửa sổ đánh giá trượt (W)", min_value=100, max_value=2000,
+        "Rolling Evaluation Window (W)", min_value=100, max_value=2000,
         value=int(initial_win), step=100,
-        help="Số giao dịch gần nhất dùng để tính toán PR-AUC và Pr@k."
+        help="The most recent transactions used for Average Precision, Precision@k and PR curves. Rolling PR-AUC uses a fixed 1,000-transaction window."
     )
     refresh_interval = st.slider(
-        "Tần suất làm mới (giây)", min_value=1, max_value=10, value=2, step=1
+        "Refresh Interval (seconds)", min_value=1, max_value=10, value=2, step=1
     )
 
     if threshold != initial_thresh or alpha != initial_alpha or window_size != initial_win:
         update_server_config(threshold, alpha, window_size)
 
     st.divider()
-    st.subheader("Trạng Thái Tiền Huấn Luyện")
+    st.subheader("Pretraining Status")
     m_stat = check_models_status()
     if m_stat.get("pretrained_ready", False):
-        st.success(" Mô hình: Đã tiền huấn luyện (.pkl)")
-        if st.button(" Huấn Luyện Lại (Re-Warmup)", key="btn_rewarmup_side", use_container_width=True):
-            with st.spinner("Đang chạy pretrain.py..."):
+        st.success("Models: Pretrained (.pkl)")
+        if st.button("Retrain Models", key="btn_rewarmup_side", width="stretch"):
+            with st.spinner("Training with pretrain.py..."):
                 ok, msg = trigger_warmup()
                 if ok:
-                    st.success(" Huấn luyện lại thành công!")
+                    st.success("Models retrained successfully!")
                     time.sleep(1)
                     st.rerun()
                 else:
-                    st.error(f"Lỗi: {msg}")
+                    st.error(f"Error: {msg}")
     else:
-        st.error(" Mô hình: Chưa qua Warm-Up")
-        if st.button(" Huấn Luyện Ngay", type="primary", key="btn_warmup_side", use_container_width=True):
-            with st.spinner("Đang chạy pretrain.py..."):
+        st.error("Models: Not Pretrained")
+        if st.button("Train Models", type="primary", key="btn_warmup_side", width="stretch"):
+            with st.spinner("Training with pretrain.py..."):
                 ok, msg = trigger_warmup()
                 if ok:
-                    st.success(" Huấn luyện hoàn tất!")
+                    st.success("Model training completed!")
                     time.sleep(1)
                     st.rerun()
                 else:
-                    st.error(f"Lỗi: {msg}")
+                    st.error(f"Error: {msg}")
 
 
 # -------------------------------------------------------------
 # MAIN DASHBOARD FRAGMENT
 # -------------------------------------------------------------
-st.title(" Giám Sát Gian Lận Trực Tuyến - Chế Độ Tối Ưu (PER & Augmentation)")
-st.caption(f"Engine: `{SERVER}` | Ngưỡng chặn: `{threshold:.2f}` | Ngân sách α: `{alpha:.1f}` | Cửa sổ W: `{window_size}` | Làm mới: `{refresh_interval}s`")
+st.title("Real-Time Fraud Monitoring - Advanced (PER & Augmentation)")
+st.caption(f"Engine: `{SERVER}` | Block threshold: `{threshold:.2f}` | Alert budget α: `{alpha:.1f}` | Window W: `{window_size}` | Refresh: `{refresh_interval}s`")
 
 
 @st.fragment(run_every=refresh_interval)
@@ -466,16 +470,16 @@ def render_dashboard():
     stats = fetch_stats()
 
     if stats is None:
-        st.error(" Server ML đang Offline. Vui lòng bấm 'Khởi Động Server' ở thanh bên trái!")
+        st.error("The ML server is offline. Click 'Start Server' in the sidebar.")
         return
 
     drift_info = fetch_drift_info()
 
     # Top KPI Cards
     col1, col2, col3, col4, col5, col6 = st.columns(6)
-    col1.metric("Tổng Giao Dịch", f"{stats.get('total', 0):,}")
-    col2.metric("Gian Lận Thực Tế", stats.get("fraud_detected", 0))
-    col3.metric("Số Lệnh Bị Chặn", stats.get("blocked", 0))
+    col1.metric("Total Transactions", f"{stats.get('total', 0):,}")
+    col2.metric("Confirmed Frauds", stats.get("fraud_detected", 0), help="Ground-truth fraud labels received through transaction feedback.")
+    col3.metric("Blocked Transactions", stats.get("blocked", 0))
 
     prauc_hat_val = stats.get("prauc_hat", stats.get("prauc_sgd", 0.0))
     sk_ap_hat_val = stats.get("sk_ap_hat", stats.get("sk_ap_sgd", 0.0))
@@ -488,9 +492,9 @@ def render_dashboard():
     pr_k_arf_pct = stats.get("pr_at_k_arf", stats.get("pr_at_k_adam", 0.0)) * 100
     pr_k_rf_pct  = stats.get("pr_at_k_rf", 0.0) * 100
 
-    col4.metric("PR-AUC (HAT)", f"{prauc_hat_val:.4f}", help=f"Rolling PR-AUC: {prauc_hat_val:.4f} | Sklearn AP: {sk_ap_hat_val:.4f}")
-    col5.metric("PR-AUC (ARF - Optimize)", f"{prauc_arf_val:.4f}", help=f"Rolling PR-AUC: {prauc_arf_val:.4f} | Sklearn AP: {sk_ap_arf_val:.4f}")
-    col6.metric("PR-AUC (Batch RF)", f"{prauc_rf_val:.4f}", help=f"Rolling PR-AUC: {prauc_rf_val:.4f} | Sklearn AP: {sk_ap_rf_val:.4f}")
+    col4.metric("PR-AUC (HAT)", f"{prauc_hat_val:.4f}", help=f"Rolling PR-AUC: {prauc_hat_val:.4f} | Scikit-learn AP: {sk_ap_hat_val:.4f}")
+    col5.metric("PR-AUC (ARF)", f"{prauc_arf_val:.4f}", help=f"Rolling PR-AUC: {prauc_arf_val:.4f} | Scikit-learn AP: {sk_ap_arf_val:.4f}")
+    col6.metric("PR-AUC (Static RF)", f"{prauc_rf_val:.4f}", help=f"Rolling PR-AUC: {prauc_rf_val:.4f} | Scikit-learn AP: {sk_ap_rf_val:.4f}")
 
     tot_frauds = int(stats.get("fraud_detected", 0))
     cm_h_d = stats.get("cm_hat", stats.get("cm_sgd", {}))
@@ -505,21 +509,21 @@ def render_dashboard():
     g_acc_a = (tp_a / tot_frauds * 100) if tot_frauds > 0 else 0.0
     g_acc_r = (tp_r / tot_frauds * 100) if tot_frauds > 0 else 0.0
 
-    st.markdown("#####  Tỷ Lệ Phát Hiện Gian Lận Toàn Cục (True Positives / Tổng Gian Lận Thực Tế)")
+    st.markdown("##### Overall Fraud Recall (True Positives / Confirmed Frauds)")
     gcol1, gcol2, gcol3 = st.columns(3)
-    gcol1.metric("Nhận Diện (HAT)", f"{tp_h:,} / {tot_frauds:,}", f"{g_acc_h:.1f}% phát hiện đúng")
-    gcol2.metric("Nhận Diện (ARF - Optimize)", f"{tp_a:,} / {tot_frauds:,}", f"{g_acc_a:.1f}% phát hiện đúng")
-    gcol3.metric("Nhận Diện (Batch RF)", f"{tp_r:,} / {tot_frauds:,}", f"{g_acc_r:.1f}% phát hiện đúng")
+    gcol1.metric("Recall (HAT)", f"{tp_h:,} / {tot_frauds:,}", f"{g_acc_h:.1f}% recall")
+    gcol2.metric("Recall (ARF)", f"{tp_a:,} / {tot_frauds:,}", f"{g_acc_a:.1f}% recall")
+    gcol3.metric("Recall (Static RF)", f"{tp_r:,} / {tot_frauds:,}", f"{g_acc_r:.1f}% recall")
     st.divider()
 
     # Dải trạng thái Optimize
     rep_info = fetch_replay_info()
     rep_cfg = rep_info.get("config", {})
     r_col1, r_col2, r_col3, r_col4 = st.columns(4)
-    r_col1.metric("Kích Thước Fraud Buffer", f"{rep_info.get('buffer_size', 0)} / {rep_info.get('buffer_max', 100)}")
-    r_col2.metric("Số Lần Ôn Tập Tích Lũy", f"{rep_info.get('total_replays', 0):,}")
-    r_col3.metric("Chiến Lược Chọn Mẫu", "PER (Theo Độ Lỗi)" if rep_cfg.get("enable_per") else "Lấy Mẫu Đồng Đều")
-    r_col4.metric("Nhiễu Augmentation", f"BẬT (σ={rep_cfg.get('noise_std', 0.02):.3f})" if rep_cfg.get("enable_noise_aug") else "TẮT")
+    r_col1.metric("Fraud Replay Buffer", f"{rep_info.get('buffer_size', 0)} / {rep_info.get('buffer_max', 100)}")
+    r_col2.metric("Total Replays", f"{rep_info.get('total_replays', 0):,}")
+    r_col3.metric("Replay Sampling Strategy", "PER (Prediction Error)" if rep_cfg.get("enable_per") else "Uniform Sampling")
+    r_col4.metric("Noise Augmentation", f"ON (σ={rep_cfg.get('noise_std', 0.02):.3f})" if rep_cfg.get("enable_noise_aug") else "OFF")
     st.divider()
 
     logs = fetch_logs(limit=100)
@@ -534,64 +538,67 @@ def render_dashboard():
         col_chart1, col_chart2 = st.columns([2, 1])
 
         with col_chart1:
-            st.subheader("Xác Suất Gian Lận Theo Thời Gian (Optimize)")
+            st.subheader("Fraud Probability over Time")
             fig_line = px.line(
-                df, x="index", y=["prob_hat", "prob_arf", "prob_rf"],
-                labels={"index": "Thứ tự giao dịch", "value": "P(gian lận)", "variable": "Mô hình"},
+                df.rename(columns={"prob_hat": "HAT", "prob_arf": "ARF", "prob_rf": "Static RF"}),
+                x="index", y=["HAT", "ARF", "Static RF"],
+                labels={"index": "Transaction Order", "value": "Fraud Probability", "variable": "Model"},
                 template="plotly_dark", height=320,
             )
             fig_line.add_hline(
                 y=threshold, line_dash="dash", line_color="#facc15",
-                annotation_text=f"Ngưỡng chặn {threshold:.2f}"
+                annotation_text=f"Block Threshold {threshold:.2f}"
             )
             fig_line.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 uirevision="fixed_view",
             )
-            st.plotly_chart(fig_line, use_container_width=True, key="h3_chart_line")
+            st.plotly_chart(fig_line, width="stretch", key="h3_chart_line")
 
         with col_chart2:
-            st.subheader("Tỷ Lệ Quyết Định (ALLOW / BLOCK)")
+            st.subheader("Gateway Decisions (ALLOW / BLOCK)")
             action_counts = df["action"].value_counts().reset_index()
             action_counts.columns = ["action", "count"]
             fig_pie = px.pie(
                 action_counts, names="action", values="count", color="action",
+                labels={"action": "Decision", "count": "Transactions"},
                 color_discrete_map={"BLOCK": "#ef4444", "ALLOW": "#22c55e"},
                 template="plotly_dark", height=320, hole=0.5,
             )
             fig_pie.update_layout(margin=dict(l=0, r=0, t=10, b=0), uirevision="fixed_view")
-            st.plotly_chart(fig_pie, use_container_width=True, key="h3_chart_pie")
+            st.plotly_chart(fig_pie, width="stretch", key="h3_chart_pie")
 
         st.divider()
-        st.subheader("Bảng Tổng Hợp Hiệu Năng (Optimize vs Baseline)")
+        st.subheader("Model Performance (Online vs Static Baseline)")
         bench_df = pd.DataFrame({
-            "Mô hình": [
+            "Model": [
                 "Hoeffding Adaptive Tree (HAT)",
-                "Adaptive Random Forest (ARF - Optimize)",
-                "Random Forest (Batch Sklearn)"
+                "Adaptive Random Forest (ARF)",
+                "Static Random Forest (Scikit-learn)"
             ],
-            "Phân loại": [
+            "Model Family": [
                 "Online Streaming (Single Tree + ADWIN)",
                 "Online Streaming (Ensemble + PER + Noise)",
-                "Batch Baseline (Tĩnh, không cập nhật)"
+                "Static Batch Baseline (No Online Updates)"
             ],
-            "PR-AUC Trung Bình": [
+            "Rolling PR-AUC": [
                 f"{prauc_hat_val:.4f}",
                 f"{prauc_arf_val:.4f}",
                 f"{prauc_rf_val:.4f}"
             ],
-            "Precision@k (Ngân Sách k)": [
+            "Precision@k (Alert Budget)": [
                 f"{pr_k_hat_pct:.2f}%",
                 f"{pr_k_arf_pct:.2f}%",
                 f"{pr_k_rf_pct:.2f}%"
             ]
         })
-        st.dataframe(bench_df, use_container_width=True)
+        st.dataframe(bench_df, width="stretch")
         st.divider()
 
         # Biểu đồ biến thiên PR-AUC
-        st.subheader("Theo Dõi Biến Thiên PR-AUC & Điểm Concept Drift (ADWIN)")
+        st.subheader("Rolling PR-AUC & ADWIN Concept Drift")
+        st.caption("ADWIN monitors 1 - ARF rolling PR-AUC. Drift markers show detected changes in this signal.")
         prauc_hist = fetch_prauc_history()
         if prauc_hist:
             hist_df = pd.DataFrame(prauc_hist)
@@ -603,17 +610,17 @@ def render_dashboard():
             fig_drift = go.Figure()
             fig_drift.add_trace(go.Scatter(
                 x=hist_df["step"], y=hist_df["prauc_hat"],
-                mode="lines", name=f"HAT (Hiện tại: {prauc_hat_val:.4f})",
+                mode="lines", name=f"HAT (Current: {prauc_hat_val:.4f})",
                 line=dict(color="#3b82f6", width=2.5)
             ))
             fig_drift.add_trace(go.Scatter(
                 x=hist_df["step"], y=hist_df["prauc_arf"],
-                mode="lines", name=f"ARF Optimize (Hiện tại: {prauc_arf_val:.4f})",
+                mode="lines", name=f"ARF (Current: {prauc_arf_val:.4f})",
                 line=dict(color="#10b981", width=2.5, dash="dash")
             ))
             fig_drift.add_trace(go.Scatter(
                 x=hist_df["step"], y=hist_df["prauc_rf"],
-                mode="lines", name=f"Batch RF (Hiện tại: {prauc_rf_val:.4f})",
+                mode="lines", name=f"Static RF (Current: {prauc_rf_val:.4f})",
                 line=dict(color="#ef4444", width=2.5, dash="dot")
             ))
 
@@ -628,7 +635,7 @@ def render_dashboard():
             if drift_x:
                 fig_drift.add_trace(go.Scatter(
                     x=drift_x, y=drift_y, mode="markers",
-                    name=f"Điểm Drift ({len(drift_x)} điểm)",
+                    name=f"Drift Events ({len(drift_x)} events)",
                     marker=dict(symbol="diamond", size=10, color="#facc15", line=dict(width=1.5, color="#000")),
                 ))
 
@@ -640,8 +647,8 @@ def render_dashboard():
                 )
 
             fig_drift.update_layout(
-                title="Biến Thiên PR-AUC Theo Luồng Giao Dịch (Optimize)",
-                xaxis_title="Thứ tự giao dịch (Step)",
+                title="Rolling PR-AUC over the Transaction Stream",
+                xaxis_title="Transaction Step",
                 yaxis_title="Rolling PR-AUC",
                 template="plotly_dark", height=340,
                 margin=dict(l=0, r=0, t=30, b=0),
@@ -649,9 +656,9 @@ def render_dashboard():
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 uirevision="fixed_view",
             )
-            st.plotly_chart(fig_drift, use_container_width=True, key="h3_chart_prauc")
+            st.plotly_chart(fig_drift, width="stretch", key="h3_chart_prauc")
         else:
-            st.info("Chưa có dữ liệu biến thiên PR-AUC. Hãy bắn luồng giao dịch để quan sát biểu đồ.")
+            st.info("No PR-AUC history yet. Stream transactions to populate this chart.")
 
         st.divider()
         k_val = stats.get("k_eval", 1)
@@ -662,85 +669,87 @@ def render_dashboard():
         with pcol1:
             st.markdown(f"""
 **HAT Pr@{k_val}**: `{pr_k_hat_pct:.2f}%`
-* **Rolling PR-AUC**: `{prauc_hat_val:.4f}` | **Sklearn AP**: `{sk_ap_hat_val:.4f}`
-* **Nhận diện toàn cục**: **`{tp_h:,} / {tot_frauds:,} ({g_acc_h:.1f}%)`**
-* **Cửa sổ**: `{win_size}` giao dịch (`{frauds_in_win}` gian lận)
+* **Rolling PR-AUC**: `{prauc_hat_val:.4f}` | **Scikit-learn AP**: `{sk_ap_hat_val:.4f}`
+* **Overall fraud recall**: **`{tp_h:,} / {tot_frauds:,} ({g_acc_h:.1f}%)`**
+* **Window**: `{win_size}` transactions (`{frauds_in_win}` frauds)
 ```text
-Ma trận nhầm lẫn HAT ({stats.get('total', 0):,} txs):
+HAT Confusion Matrix ({stats.get('total', 0):,} txs):
 TP: {cm_h_d.get('tp', 0):<6} | FP: {cm_h_d.get('fp', 0):<6}
 FN: {cm_h_d.get('fn', 0):<6} | TN: {cm_h_d.get('tn', 0):<6}
 ```
 """)
         with pcol2:
             st.markdown(f"""
-**ARF Optimize Pr@{k_val}**: `{pr_k_arf_pct:.2f}%`
-* **Rolling PR-AUC**: `{prauc_arf_val:.4f}` | **Sklearn AP**: `{sk_ap_arf_val:.4f}`
-* **Nhận diện toàn cục**: **`{tp_a:,} / {tot_frauds:,} ({g_acc_a:.1f}%)`**
-* **Cửa sổ**: `{win_size}` giao dịch (`{frauds_in_win}` gian lận)
+**ARF Pr@{k_val}**: `{pr_k_arf_pct:.2f}%`
+* **Rolling PR-AUC**: `{prauc_arf_val:.4f}` | **Scikit-learn AP**: `{sk_ap_arf_val:.4f}`
+* **Overall fraud recall**: **`{tp_a:,} / {tot_frauds:,} ({g_acc_a:.1f}%)`**
+* **Window**: `{win_size}` transactions (`{frauds_in_win}` frauds)
 ```text
-Ma trận nhầm lẫn ARF ({stats.get('total', 0):,} txs):
+ARF Confusion Matrix ({stats.get('total', 0):,} txs):
 TP: {cm_a_d.get('tp', 0):<6} | FP: {cm_a_d.get('fp', 0):<6}
 FN: {cm_a_d.get('fn', 0):<6} | TN: {cm_a_d.get('tn', 0):<6}
 ```
 """)
         with pcol3:
             st.markdown(f"""
-**Batch RF Pr@{k_val}**: `{pr_k_rf_pct:.2f}%`
-* **Rolling PR-AUC**: `{prauc_rf_val:.4f}` | **Sklearn AP**: `{sk_ap_rf_val:.4f}`
-* **Nhận diện toàn cục**: **`{tp_r:,} / {tot_frauds:,} ({g_acc_r:.1f}%)`**
-* **Cửa sổ**: `{win_size}` giao dịch (`{frauds_in_win}` gian lận)
+**Static RF Pr@{k_val}**: `{pr_k_rf_pct:.2f}%`
+* **Rolling PR-AUC**: `{prauc_rf_val:.4f}` | **Scikit-learn AP**: `{sk_ap_rf_val:.4f}`
+* **Overall fraud recall**: **`{tp_r:,} / {tot_frauds:,} ({g_acc_r:.1f}%)`**
+* **Window**: `{win_size}` transactions (`{frauds_in_win}` frauds)
 ```text
-Ma trận nhầm lẫn Batch RF ({stats.get('total', 0):,} txs):
+Static RF Confusion Matrix ({stats.get('total', 0):,} txs):
 TP: {cm_r_d.get('tp', 0):<6} | FP: {cm_r_d.get('fp', 0):<6}
 FN: {cm_r_d.get('fn', 0):<6} | TN: {cm_r_d.get('tn', 0):<6}
 ```
 """)
         st.divider()
-        st.subheader("Nhật Ký Giao Dịch Gần Nhất (Audit Log)")
+        st.subheader("Recent Transactions (Audit Log)")
         disp_cols = ["transaction_id", "prob_hat", "prob_arf", "prob_rf", "action", "timestamp"]
         avail_cols = [c for c in disp_cols if c in df.columns]
         disp_df = df[avail_cols].copy()
         disp_df["timestamp"] = pd.to_datetime(disp_df["timestamp"], unit="s").dt.strftime("%H:%M:%S")
         disp_df = disp_df.iloc[::-1].reset_index(drop=True)
         st.dataframe(
-            disp_df, use_container_width=True, hide_index=True,
+            disp_df, width="stretch", hide_index=True,
             column_config={
-                "prob_hat": st.column_config.ProgressColumn("P(gian lận) HAT", min_value=0, max_value=1, format="%.4f"),
-                "prob_arf": st.column_config.ProgressColumn("P(gian lận) ARF (H3)", min_value=0, max_value=1, format="%.4f"),
-                "prob_rf": st.column_config.ProgressColumn("P(gian lận) Batch RF", min_value=0, max_value=1, format="%.4f"),
-                "action": st.column_config.TextColumn("Quyết Định"),
+                "transaction_id": st.column_config.TextColumn("Transaction ID"),
+                "prob_hat": st.column_config.ProgressColumn("Fraud Probability (HAT)", min_value=0, max_value=1, format="%.4f"),
+                "prob_arf": st.column_config.ProgressColumn("Fraud Probability (ARF)", min_value=0, max_value=1, format="%.4f"),
+                "prob_rf": st.column_config.ProgressColumn("Fraud Probability (Static RF)", min_value=0, max_value=1, format="%.4f"),
+                "action": st.column_config.TextColumn("Decision"),
+                "timestamp": st.column_config.TextColumn("Time"),
             }
         )
     else:
-        st.info("Chưa có dữ liệu giao dịch. Vui lòng bấm 'Bắt Đầu Bắn Luồng Ngay' ở thanh bên trái để kiểm tra.")
+        st.info("No transactions yet. Click 'Start Streaming' in the sidebar to begin.")
 
     # -------------------------------------------------------------
     # OPTIMIZE DEEP-DIVE PANEL
     # -------------------------------------------------------------
     st.divider()
-    st.subheader(" Bảng Phân Tích Chuyên Sâu Optimize (Prioritized Replay & Augmentation)")
+    st.subheader("Optimization Details (Prioritized Replay & Augmentation)")
     col_cfg, col_aug = st.columns([1, 1])
 
     with col_cfg:
-        st.markdown("####  Cấu Hình Thuật Toán Optimize")
+        st.markdown("#### Replay & Augmentation Settings")
         with st.form("form_optimize_cfg"):
-            c_per = st.checkbox("Bật Prioritized Experience Replay (PER)", value=rep_cfg.get("enable_per", True), help="Ưu tiên lấy mẫu ôn tập tỷ lệ thuận với độ lỗi dự đoán (Error = 1 - P(gian lận)).")
-            c_noise = st.checkbox("Bật Gaussian Noise Augmentation", value=rep_cfg.get("enable_noise_aug", True), help="Thêm nhiễu Gaussian ngẫu nhiên vào đặc trưng để sinh biến thể mới khi ôn tập.")
-            s_std = st.slider("Độ lệch chuẩn nhiễu (Noise std)", min_value=0.005, max_value=0.10, value=float(rep_cfg.get("noise_std", 0.02)), step=0.005)
-            s_int = st.slider("Chu kỳ ôn tập (Mỗi N giao dịch hợp lệ)", min_value=2, max_value=50, value=int(rep_cfg.get("replay_interval", 10)), step=1)
+            c_per = st.checkbox("Enable Prioritized Experience Replay (PER)", value=rep_cfg.get("enable_per", True), help="Prioritize replay samples in proportion to prediction error (Error = 1 - Fraud Probability). When unchecked, replay continues with uniform sampling.")
+            c_noise = st.checkbox("Enable Gaussian Noise Augmentation", value=rep_cfg.get("enable_noise_aug", True), help="Add random Gaussian noise to features to generate variants during replay.")
+            s_std = st.slider("Noise Standard Deviation", min_value=0.005, max_value=0.10, value=float(rep_cfg.get("noise_std", 0.02)), step=0.005)
+            s_int = st.slider("Replay Interval (Every N Legitimate Transactions)", min_value=2, max_value=50, value=int(rep_cfg.get("replay_interval", 10)), step=1)
 
-            submitted = st.form_submit_button(" Áp Dụng Cấu Hình", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Apply Settings", type="primary", width="stretch")
             if submitted:
                 ok = update_replay_config(c_per, c_noise, s_std, s_int)
                 if ok:
-                    st.success(" Đã cập nhật cấu hình Optimize thành công!")
+                    st.success("Replay and augmentation settings updated successfully!")
                     time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("Không thể kết nối đến server để cập nhật.")
+                    st.error("Could not connect to the server to update settings.")
 
     with col_aug:
-        st.markdown("####  Trực Quan Hóa Mẫu Gian Lận Được Sinh Mới")
+        st.markdown("#### Augmented Fraud Sample Comparison")
         last_rep = rep_info.get("last_replay")
         if last_rep and last_rep.get("original") and last_rep.get("augmented"):
             orig = last_rep["original"]
@@ -748,30 +757,38 @@ FN: {cm_r_d.get('fn', 0):<6} | TN: {cm_r_d.get('tn', 0):<6}
             target_keys = [k for k in ["V10", "V12", "V14", "V17", "Amount"] if k in orig] or list(orig.keys())[:5]
 
             comp_df = pd.DataFrame({
-                "Đặc trưng": target_keys,
-                "Gốc (Lịch sử)": [orig[k] for k in target_keys],
-                "Sinh mới (Augmented)": [aug[k] for k in target_keys]
+                "Feature": target_keys,
+                "Original (Historical)": [orig[k] for k in target_keys],
+                "Augmented": [aug[k] for k in target_keys]
             })
 
             fig_comp = go.Figure()
-            fig_comp.add_trace(go.Bar(x=comp_df["Đặc trưng"], y=comp_df["Gốc (Lịch sử)"], name="Gốc (Lịch sử)", marker_color="#3b82f6"))
-            fig_comp.add_trace(go.Bar(x=comp_df["Đặc trưng"], y=comp_df["Sinh mới (Augmented)"], name="Sinh mới (Augmented)", marker_color="#f59e0b"))
+            fig_comp.add_trace(go.Bar(x=comp_df["Feature"], y=comp_df["Original (Historical)"], name="Original (Historical)", marker_color="#3b82f6"))
+            fig_comp.add_trace(go.Bar(x=comp_df["Feature"], y=comp_df["Augmented"], name="Augmented", marker_color="#f59e0b"))
             fig_comp.update_layout(
                 barmode="group", template="plotly_dark", height=280,
+                xaxis_title="Feature", yaxis_title="Feature Value",
                 margin=dict(l=0, r=0, t=10, b=0),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-            st.plotly_chart(fig_comp, use_container_width=True, key="h3_chart_aug_comp")
-            st.caption(f"Độ ưu tiên ôn tập: **{last_rep.get('priority', 1.0):.4f}** | Độ lỗi dự đoán: **{last_rep.get('error', 1.0):.4f}**")
+            st.plotly_chart(fig_comp, width="stretch", key="h3_chart_aug_comp")
+            st.caption(f"Replay priority: **{last_rep.get('priority', 1.0):.4f}** | Prediction error: **{last_rep.get('error', 1.0):.4f}**")
         else:
-            st.info("Chưa có mẫu nào được ôn tập trong phiên này. Hãy bắn luồng giao dịch để quan sát quá trình sinh biến thể!")
+            st.info("No samples have been replayed in this session. Stream transactions to see augmented variants.")
 
     st.divider()
-    st.markdown("####  Top Ca Gian Lận Khó Nhất Trong Bộ Nhớ (Hard Positives)")
+    st.markdown("#### Hardest Fraud Samples in Memory (Hard Positives)")
     top_hardest = rep_info.get("top_hardest", [])
     if top_hardest:
-        st.dataframe(pd.DataFrame(top_hardest), use_container_width=True)
-        st.caption("Các ca gian lận có độ lỗi dự đoán cao nhất (Error gần 1.0) được gán trọng số ưu tiên cao nhất khi mô hình ôn luyện.")
+        st.dataframe(
+            pd.DataFrame(top_hardest), width="stretch",
+            column_config={
+                "error": st.column_config.NumberColumn("Prediction Error", format="%.4f"),
+                "priority": st.column_config.NumberColumn("Replay Priority", format="%.4f"),
+                "timestamp": st.column_config.NumberColumn("Timestamp (Unix seconds)", format="%.2f"),
+            },
+        )
+        st.caption("Fraud samples with the highest prediction error (Error close to 1.0) receive the highest replay priority.")
 
 
 render_dashboard()

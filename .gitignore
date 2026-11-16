@@ -1,41 +1,34 @@
-# Byte-compiled / optimized / DLL files
+# Python bytecode and environments
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Virtual environments
+.venv/
 venv/
 env/
+
+# Private laptop runtime, tools and process records
+.runtime/
+.tools/
+.local-run/
+
+# Local secrets
 .env
-.venv/
+.env.*
+!.env.example
 
-# Model files
+# Datasets and trained models
+data/
+*.csv
 *.pkl
+*.joblib
 
-# Runtime files
+# Generated process status and logs
 *.pid
 *.log
 boost_status.json
 
-# IDEs
+# Editor and operating-system files
 .vscode/
 .idea/
-
-# OS generated files
 .DS_Store
 Thumbs.db
-EXTRA.html
-run.bat
-Speedup.bat
-Note.txt
-
-# Datasets
-*.csv
-data/
-
-# Documentation
-docs/
-*.html
-*.txt
-*.docx
-*.log

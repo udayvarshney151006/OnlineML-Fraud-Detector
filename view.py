@@ -96,7 +96,7 @@ def update_server_config(threshold: float, alpha: float, window_size: int):
 # SIDEBAR: Cau hinh Cong Thanh toan Bien
 # -------------------------------------------------------------
 with st.sidebar:
-    st.header("Cau Hinh Cong Bien")
+    st.header("Payment Gateway Settings")
     st.caption("Payment Edge Gateway & ML Engine Settings")
 
     current_stats = fetch_stats()
@@ -106,39 +106,39 @@ with st.sidebar:
     initial_win = int(srv_config.get("window_size", 500))
 
     threshold = st.slider(
-        "Nguong chan (Block Threshold)",
+        "Block Threshold",
         min_value=0.05,
         max_value=0.95,
         value=initial_thresh,
         step=0.05,
-        help="Giao dich co P(fraud) > nguong nay se bi Cong thanh toan chan (BLOCK) tuc thi."
+        help="The payment gateway immediately blocks transactions with P(fraud) above this threshold."
     )
 
     alpha = st.slider(
-        "He so Alert Budget (alpha)",
+        "Alert Budget Multiplier (alpha)",
         min_value=0.1,
         max_value=3.0,
         value=initial_alpha,
         step=0.1,
-        help="He so alpha dung tinh k trong Pr@k: k = max(1, round(alpha * fraud_rate * window_size))."
+        help="Alpha determines k in Pr@k: k = max(1, round(alpha * fraud_rate * window_size))."
     )
 
     window_size = st.slider(
-        "Cua so truot (Window Size W)",
+        "Sliding Window Size (W)",
         min_value=100,
         max_value=2000,
         value=initial_win,
         step=100,
-        help="So luong giao dich gan nhat dung de tinh toan Pr@k, AP va PR Curve."
+        help="Number of recent transactions used to calculate Pr@k, average precision (AP), and the precision-recall curve."
     )
 
     refresh_interval = st.slider(
-        "Chu ky lam moi (Refresh Sec)",
+        "Refresh Interval (Seconds)",
         min_value=1,
         max_value=10,
         value=2,
         step=1,
-        help="Thoi gian tu dong lam moi giao dien dashboard (giay)."
+        help="Time between automatic dashboard refreshes, in seconds."
     )
 
     if (threshold != initial_thresh or alpha != initial_alpha or window_size != initial_win):
@@ -157,16 +157,16 @@ def render_dashboard():
     stats = fetch_stats()
 
     if stats is None:
-        st.error("May chu ML Server dang Offline! Vui long dam bao server.py dang chay tai cong 8000.")
+        st.error("The ML server is offline. Make sure server.py is running on port 8000.")
         return
 
-    st.success("ML Server Online - San sang tiep nhan luong giao dich bien")
+    st.success("ML Server Online - Ready to receive payment transactions")
 
     # Top KPI Metric Cards
     col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5, col_kpi6 = st.columns(6)
-    col_kpi1.metric("Tong Giao Dich", f"{stats.get('total', 0):,}")
-    col_kpi2.metric("Gian Lan Phat Hien", stats.get("fraud_detected", 0), delta=None, delta_color="inverse")
-    col_kpi3.metric("So Lenh Bi Chan", stats.get("blocked", 0))
+    col_kpi1.metric("Total Transactions", f"{stats.get('total', 0):,}")
+    col_kpi2.metric("Confirmed Fraud Transactions", stats.get("fraud_detected", 0), delta=None, delta_color="inverse")
+    col_kpi3.metric("Blocked Transactions", stats.get("blocked", 0))
 
     prauc_sgd_val = stats.get('prauc_sgd', 0.0)
     sk_ap_sgd_val = stats.get('sk_ap_sgd', 0.0)
@@ -179,17 +179,17 @@ def render_dashboard():
     pr_k_adam_pct = stats.get('pr_at_k_adam', 0.0) * 100
     
     col_kpi4.metric(
-        "PR-AUC (SGD)",
+        "PR-AUC (HAT)",
         f"{prauc_sgd_val:.4f}",
         help=f"River RollingPRAUC: {prauc_sgd_val:.4f} | Sklearn AP: {sk_ap_sgd_val:.4f}"
     )
     col_kpi5.metric(
-        "PR-AUC (Adam)",
+        "PR-AUC (ARF)",
         f"{prauc_adam_val:.4f}",
         help=f"River RollingPRAUC: {prauc_adam_val:.4f} | Sklearn AP: {sk_ap_adam_val:.4f}"
     )
     col_kpi6.metric(
-        "PR-AUC (RF)",
+        "PR-AUC (Static RF)",
         f"{prauc_rf_val:.4f}",
         help=f"River RollingPRAUC: {prauc_rf_val:.4f} | Sklearn AP: {sk_ap_rf_val:.4f}"
     )
@@ -205,28 +205,35 @@ def render_dashboard():
         col_chart1, col_chart2 = st.columns([2, 1])
 
         with col_chart1:
-            st.subheader("Xac Suat Gian Lan Theo Thoi Gian")
+            st.subheader("Fraud Probability Over Time")
             fig_line = px.line(
                 df,
                 x="index",
                 y=["prob_sgd", "prob_adam", "prob_rf"], 
-                labels={"index": "Thu tu Giao dich", "value": "P(fraud)", "variable": "Mo hinh"},
+                labels={"index": "Transaction Order", "value": "P(fraud)", "variable": "Model"},
                 template="plotly_dark",
                 height=320,
             )
+            for trace in fig_line.data:
+                model_label = {"prob_sgd": "HAT", "prob_adam": "ARF", "prob_rf": "Static RF"}.get(trace.name, trace.name)
+                trace.update(
+                    name=model_label,
+                    legendgroup=model_label,
+                    hovertemplate=trace.hovertemplate.replace(trace.name, model_label),
+                )
             fig_line.add_hline(
                 y=threshold, line_dash="dash", line_color="#facc15",
-                annotation_text=f"Nguong Chan {threshold:.2f}"
+                annotation_text=f"Block Threshold {threshold:.2f}"
             )
             fig_line.update_layout(
                 margin=dict(l=0, r=0, t=10, b=0),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 uirevision="constant_fixed_view",
             )
-            st.plotly_chart(fig_line, use_container_width=True, key="chart_line_stream")
+            st.plotly_chart(fig_line, width="stretch", key="chart_line_stream")
 
         with col_chart2:
-            st.subheader("Ty Le ALLOW / BLOCK")
+            st.subheader("ALLOW / BLOCK Distribution")
             action_counts = df["action"].value_counts().reset_index()
             action_counts.columns = ["action", "count"]
             fig_pie = px.pie(
@@ -234,6 +241,7 @@ def render_dashboard():
                 names="action",
                 values="count",
                 color="action",
+                labels={"action": "Decision", "count": "Transactions"},
                 color_discrete_map={"BLOCK": "#ef4444", "ALLOW": "#22c55e"},
                 template="plotly_dark",
                 height=320,
@@ -243,18 +251,18 @@ def render_dashboard():
                 margin=dict(l=0, r=0, t=10, b=0),
                 uirevision="constant_fixed_view",
             )
-            st.plotly_chart(fig_pie, use_container_width=True, key="chart_pie_action")
+            st.plotly_chart(fig_pie, width="stretch", key="chart_pie_action")
 
         st.divider()
-        st.subheader("Hieu Nang Mo Hinh (Batch vs Online)")
-        st.markdown("### Bảng Tổng Hợp Benchmark (Batch vs Online)")
+        st.subheader("Model Performance (Batch vs Online)")
+        st.markdown("### Benchmark Summary (Batch vs Online)")
         benchmark_data = {
-            "Model": ["Random Forest (Sklearn)", "Logistic Regression (SGD - River)", "Logistic Regression (Adam - River)"],
+            "Model": ["Random Forest (Scikit-learn)", "Hoeffding Adaptive Tree (HAT - River)", "Adaptive Random Forest (ARF - River)"],
             "Family": ["Batch (Offline Baseline)", "Online (Streaming)", "Online (Streaming)"],
-            "Mean PR-AUC": [f"{prauc_rf_val:.4f}", f"{prauc_sgd_val:.4f}", f"{prauc_adam_val:.4f}"],
+            "Rolling PR-AUC": [f"{prauc_rf_val:.4f}", f"{prauc_sgd_val:.4f}", f"{prauc_adam_val:.4f}"],
             "Precision@k": [f"{stats.get('pr_at_k_rf', 0.0)*100:.2f}%", f"{stats.get('pr_at_k_sgd', 0.0)*100:.2f}%", f"{stats.get('pr_at_k_adam', 0.0)*100:.2f}%"]
         }
-        st.dataframe(pd.DataFrame(benchmark_data), use_container_width=True)
+        st.dataframe(pd.DataFrame(benchmark_data), width="stretch")
         st.divider()
 
         col_perf1, col_perf2, col_perf3 = st.columns(3)
@@ -265,12 +273,12 @@ def render_dashboard():
 
         with col_perf1:
             st.markdown(f"""
-**SGD Pr@{k_val} (Top-{k_val} Alert Budget)**: `{stats.get('pr_at_k_sgd', 0.0)*100:.2f}%`
+**HAT Pr@{k_val} (Top-{k_val} Alert Budget)**: `{stats.get('pr_at_k_sgd', 0.0)*100:.2f}%`
 * **River Rolling PR-AUC**: `{prauc_sgd_val:.4f}`
 * **Scikit-learn Average Precision (AP)**: `{sk_ap_sgd_val:.4f}`
-* **Cua so tinh toan**: `{win_size}` giao dich gan nhat (`{frauds_in_win}` ca gian lan)
+* **Evaluation Window**: `{win_size}` recent transactions (`{frauds_in_win}` confirmed frauds)
 ```text
-Ma tran nham lan tich luy (SGD - {stats.get('total', 0):,} txs):
+Cumulative Confusion Matrix (HAT - {stats.get('total', 0):,} transactions):
 True Positives : {stats.get('cm_sgd', {}).get('tp', 0):<6} | False Positives: {stats.get('cm_sgd', {}).get('fp', 0):<6}
 False Negatives: {stats.get('cm_sgd', {}).get('fn', 0):<6} | True Negatives : {stats.get('cm_sgd', {}).get('tn', 0):<6}
 ```
@@ -278,51 +286,54 @@ False Negatives: {stats.get('cm_sgd', {}).get('fn', 0):<6} | True Negatives : {s
 
         with col_perf2:
             st.markdown(f"""
-**Adam Pr@{k_val} (Top-{k_val} Alert Budget)**: `{stats.get('pr_at_k_adam', 0.0)*100:.2f}%`
+**ARF Pr@{k_val} (Top-{k_val} Alert Budget)**: `{stats.get('pr_at_k_adam', 0.0)*100:.2f}%`
 * **River Rolling PR-AUC**: `{prauc_adam_val:.4f}`
 * **Scikit-learn Average Precision (AP)**: `{sk_ap_adam_val:.4f}`
-* **Cua so tinh toan**: `{win_size}` giao dich gan nhat (`{frauds_in_win}` ca gian lan)
+* **Evaluation Window**: `{win_size}` recent transactions (`{frauds_in_win}` confirmed frauds)
 ```text
-Ma tran nham lan tich luy (Adam - {stats.get('total', 0):,} txs):
+Cumulative Confusion Matrix (ARF - {stats.get('total', 0):,} transactions):
 True Positives : {stats.get('cm_adam', {}).get('tp', 0):<6} | False Positives: {stats.get('cm_adam', {}).get('fp', 0):<6}
 False Negatives: {stats.get('cm_adam', {}).get('fn', 0):<6} | True Negatives : {stats.get('cm_adam', {}).get('tn', 0):<6}
 ```
 """)
         with col_perf3:
             st.markdown(f"""
-**Batch RF Pr@{k_val} (Top-{k_val} Alert Budget)**: `{pr_k_rf_pct:.2f}%`
+**Static RF Pr@{k_val} (Top-{k_val} Alert Budget)**: `{pr_k_rf_pct:.2f}%`
 * **River Rolling PR-AUC**: `{prauc_rf_val:.4f}`
 * **Scikit-learn Average Precision (AP)**: `{sk_ap_rf_val:.4f}`
-* **Cua so tinh toan**: `{win_size}` giao dich gan nhat (`{frauds_in_win}` ca gian lan)
+* **Evaluation Window**: `{win_size}` recent transactions (`{frauds_in_win}` confirmed frauds)
 ```text
-Ma tran nham lan tich luy (Batch RF - {stats.get('total', 0):,} txs):
+Cumulative Confusion Matrix (Static RF - {stats.get('total', 0):,} transactions):
 True Positives : {stats.get('cm_rf', {}).get('tp', 0):<6} | False Positives: {stats.get('cm_rf', {}).get('fp', 0):<6}
 False Negatives: {stats.get('cm_rf', {}).get('fn', 0):<6} | True Negatives : {stats.get('cm_rf', {}).get('tn', 0):<6}
+```
 """)   
         st.divider()
-        st.subheader("Nhat Ky Giao Dich Gan Nhat (Audit Log)")
+        st.subheader("Recent Transactions (Audit Log)")
         display_df = df[["transaction_id", "prob_sgd", "prob_adam", "prob_rf", "action", "timestamp"]].copy()
         display_df["timestamp"] = pd.to_datetime(display_df["timestamp"], unit="s").dt.strftime("%H:%M:%S")
         display_df = display_df.iloc[::-1].reset_index(drop=True)
         st.dataframe(
             display_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             column_config={
+                "transaction_id": st.column_config.TextColumn("Transaction ID"),
                 "prob_sgd": st.column_config.ProgressColumn(
-                    "P(fraud) SGD", min_value=0, max_value=1, format="%.4f"
+                    "P(fraud) HAT", min_value=0, max_value=1, format="%.4f"
                 ),
                 "prob_adam": st.column_config.ProgressColumn(
-                    "P(fraud) Adam", min_value=0, max_value=1, format="%.4f"
+                    "P(fraud) ARF", min_value=0, max_value=1, format="%.4f"
                 ),
                 "prob_rf": st.column_config.ProgressColumn(
-                    "P(fraud) RF", min_value=0, max_value=1, format="%.4f"
+                    "P(fraud) Static RF", min_value=0, max_value=1, format="%.4f"
 ),
-                "action": st.column_config.TextColumn("Quyet Dinh"),
+                "action": st.column_config.TextColumn("Decision"),
+                "timestamp": st.column_config.TextColumn("Time"),
             }
         )
     else:
-        st.info("Chua co du lieu giao dich. Vui long chay lenh python payment_edge.py de bat dau gui luong thanh toan.")
+        st.info("No transaction data yet. Run python payment_edge.py to start streaming payment transactions.")
 
 
 # Render fragment
